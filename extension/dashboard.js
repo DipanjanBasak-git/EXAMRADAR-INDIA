@@ -487,11 +487,11 @@ async function renderProfileView() {
             <div>
               <label class="form-label">Reservation Category</label>
               <select id="profCategory" class="form-select">
-                <option value="GEN" ${p.reservation_category === 'GEN' ? 'selected' : ''}>General (UR)</option>
-                <option value="EWS" ${p.reservation_category === 'EWS' ? 'selected' : ''}>EWS</option>
-                <option value="OBC" ${p.reservation_category === 'OBC' ? 'selected' : ''}>OBC (Non-Creamy)</option>
-                <option value="SC" ${p.reservation_category === 'SC' ? 'selected' : ''}>SC</option>
-                <option value="ST" ${p.reservation_category === 'ST' ? 'selected' : ''}>ST</option>
+                <option value="general" ${(p.reservation_category === 'general' || p.reservation_category === 'GEN' || !p.reservation_category) ? 'selected' : ''}>General (UR)</option>
+                <option value="ews" ${(p.reservation_category === 'ews' || p.reservation_category === 'EWS') ? 'selected' : ''}>EWS</option>
+                <option value="obc_ncl" ${(p.reservation_category === 'obc_ncl' || p.reservation_category === 'OBC' || p.reservation_category === 'obc') ? 'selected' : ''}>OBC (Non-Creamy)</option>
+                <option value="sc" ${(p.reservation_category === 'sc' || p.reservation_category === 'SC') ? 'selected' : ''}>SC</option>
+                <option value="st" ${(p.reservation_category === 'st' || p.reservation_category === 'ST') ? 'selected' : ''}>ST</option>
                 <option value="PWD" ${p.is_pwbd ? 'selected' : ''}>PwBD</option>
                 <option value="EX_SERVICEMAN" ${p.is_ex_serviceman ? 'selected' : ''}>Ex-Servicemen</option>
               </select>
@@ -520,10 +520,10 @@ async function renderProfileView() {
               <select id="profQualLevel" class="form-select">
                 <option value="10th" ${qual.level === '10th' ? 'selected' : ''}>10th / Matriculation</option>
                 <option value="12th" ${qual.level === '12th' ? 'selected' : ''}>12th / Intermediate</option>
-                <option value="Diploma" ${qual.level === 'Diploma' ? 'selected' : ''}>Diploma</option>
-                <option value="Graduate" ${qual.level === 'Graduate' || !qual.level ? 'selected' : ''}>Graduate (B.A., B.Sc., B.Tech, etc.)</option>
-                <option value="PostGraduate" ${qual.level === 'PostGraduate' ? 'selected' : ''}>Post Graduate (M.A., M.Sc., M.Tech, etc.)</option>
-                <option value="PhD" ${qual.level === 'PhD' ? 'selected' : ''}>Ph.D. / Doctorate</option>
+                <option value="diploma" ${(qual.level === 'diploma' || qual.level === 'Diploma') ? 'selected' : ''}>Diploma</option>
+                <option value="undergraduate" ${(qual.level === 'undergraduate' || qual.level === 'Graduate' || !qual.level) ? 'selected' : ''}>Graduate (B.A., B.Sc., B.Tech, etc.)</option>
+                <option value="postgraduate" ${(qual.level === 'postgraduate' || qual.level === 'PostGraduate') ? 'selected' : ''}>Post Graduate (M.A., M.Sc., M.Tech, etc.)</option>
+                <option value="phd" ${(qual.level === 'phd' || qual.level === 'PhD') ? 'selected' : ''}>Ph.D. / Doctorate</option>
               </select>
             </div>
             <div>
@@ -564,7 +564,7 @@ async function renderProfileView() {
       state_of_residence: stateVal || null,
       nationality: 'Indian',
       gender: document.getElementById('profGender').value || null,
-      reservation_category: catVal === 'PWD' || catVal === 'EX_SERVICEMAN' ? 'GEN' : catVal,
+      reservation_category: (catVal === 'PWD' || catVal === 'EX_SERVICEMAN') ? 'general' : catVal,
       is_pwbd: catVal === 'PWD',
       is_ex_serviceman: catVal === 'EX_SERVICEMAN',
       profile_matching_enabled: true,

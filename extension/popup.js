@@ -9,14 +9,178 @@ let currentPage = 1;
 let currentFilters = {};
 let totalPages = 1;
 
+let cachedNotifications = [];
+let hasRenderedContent = false;
+
 // ===== Initialization =====
 document.addEventListener('DOMContentLoaded', async () => {
   initTheme();
   initEventListeners();
-  await loadCategories();
-  await loadDashboard();
-  await loadNotifications();
+
+  // 1. Instant 0-second render from local storage or bundled cache
+  await initOfflineCache();
+
+  // 2. Silently fetch live updates in the background
+  fetchLiveUpdates();
 });
+
+// ===== Offline Cache & Instant Rendering =====
+async function initOfflineCache() {
+  let storedNotifs = [];
+  let storedStats = null;
+  let storedCats = null;
+
+  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+    try {
+      const res = await chrome.storage.local.get(['cachedNotifications', 'cachedDashboard', 'cachedCategories']);
+      storedNotifs = res.cachedNotifications || [];
+      storedStats = res.cachedDashboard || null;
+      storedCats = res.cachedCategories || null;
+    } catch (e) {
+      console.warn('ExamRadar: Error reading cache:', e);
+    }
+  }
+
+  // Fallback to bundled verified notifications if no storage yet
+  if ((!storedNotifs || storedNotifs.length === 0) && window.EXAMRADAR_BUNDLED_NOTIFICATIONS) {
+    storedNotifs = window.EXAMRADAR_BUNDLED_NOTIFICATIONS;
+    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+      chrome.storage.local.set({ cachedNotifications: storedNotifs });
+    }
+  }
+
+  cachedNotifications = storedNotifs || [];
+
+  // Populate categories from cache or default list
+  if (storedCats && storedCats.length) {
+    populateCategoryDropdown(storedCats);
+  } else {
+    populateDefaultCategories();
+  }
+
+  // Render stats from cache or compute from cached notices
+  if (storedStats) {
+    renderStats(storedStats, true);
+  } else if (cachedNotifications.length > 0) {
+    const stats = computeStatsFromItems(cachedNotifications);
+    renderStats(stats, true);
+  }
+
+  // Render notifications instantly
+  if (cachedNotifications.length > 0) {
+    renderFilteredCachedItems();
+    hasRenderedContent = true;
+    document.getElementById('errorState').style.display = 'none';
+    document.getElementById('mainContent').style.display = 'block';
+  }
+}
+
+function renderStats(data, isCached = false) {
+  document.getElementById('statOpen').textContent = data.total_open ?? data.open ?? 0;
+  document.getElementById('statNew').textContent = data.newly_discovered ?? data.new ?? 0;
+  document.getElementById('statMatch').textContent = data.matching_profile ?? data.match ?? 0;
+  document.getElementById('statClosing').textContent = data.closing_soon ?? data.closing ?? 0;
+
+  const lastUpdatedEl = document.getElementById('lastUpdated');
+  if (data.last_updated) {
+    const d = new Date(data.last_updated);
+    lastUpdatedEl.textContent = `Last updated: ${formatDateTime(d)}${isCached ? ' (Cached)' : ''}`;
+  } else if (isCached) {
+    lastUpdatedEl.textContent = 'Showing verified notices (Connecting...)';
+  } else {
+    lastUpdatedEl.textContent = 'Live data active';
+  }
+}
+
+function computeStatsFromItems(items) {
+  const verified = (items || []).filter(n => !n.is_synthetic);
+  const now = new Date();
+  let openCount = 0;
+  let closingCount = 0;
+
+  verified.forEach(item => {
+    if (item.application_status === 'application_open') openCount++;
+    if (item.application_end_date) {
+      const end = new Date(item.application_end_date);
+      const diffDays = Math.ceil((end - now) / (1000 * 60 * 60 * 24));
+      if (diffDays >= 0 && diffDays <= 7) closingCount++;
+    }
+  });
+
+  return {
+    total_open: openCount,
+    newly_discovered: verified.length,
+    matching_profile: verified.length,
+    closing_soon: closingCount,
+    last_updated: null,
+  };
+}
+
+function filterCachedItems(items, tab, search, category, sortBy) {
+  let list = (items || []).filter(n => !n.is_synthetic);
+
+  // Tab filter
+  if (tab === 'open') {
+    list = list.filter(n => n.application_status === 'application_open');
+  } else if (tab === 'closing') {
+    const now = new Date();
+    list = list.filter(n => {
+      if (!n.application_end_date) return false;
+      const end = new Date(n.application_end_date);
+      const diff = Math.ceil((end - now) / (1000 * 60 * 60 * 24));
+      return diff >= 0 && diff <= 10;
+    });
+  } else if (tab === 'results') {
+    list = list.filter(n => n.application_status === 'result_declared');
+  }
+
+  // Search filter
+  if (search && search.trim()) {
+    const q = search.trim().toLowerCase();
+    list = list.filter(n =>
+      (n.title && n.title.toLowerCase().includes(q)) ||
+      (n.post_name && n.post_name.toLowerCase().includes(q)) ||
+      (n.advertisement_number && n.advertisement_number.toLowerCase().includes(q)) ||
+      (n.organization_short_name && n.organization_short_name.toLowerCase().includes(q)) ||
+      (n.organization_name && n.organization_name.toLowerCase().includes(q))
+    );
+  }
+
+  // Category filter
+  if (category) {
+    list = list.filter(n => n.category === category);
+  }
+
+  // Sort
+  if (sortBy === 'deadline') {
+    list.sort((a, b) => new Date(a.application_end_date || '9999-12-31') - new Date(b.application_end_date || '9999-12-31'));
+  } else if (sortBy === 'organization') {
+    list.sort((a, b) => (a.organization_short_name || '').localeCompare(b.organization_short_name || ''));
+  } else {
+    // Newest first (id desc)
+    list.sort((a, b) => (b.id || 0) - (a.id || 0));
+  }
+
+  return list;
+}
+
+function renderFilteredCachedItems() {
+  const container = document.getElementById('notificationsList');
+  const search = document.getElementById('searchInput').value;
+  const category = document.getElementById('categoryFilter').value;
+  const sortBy = document.getElementById('sortFilter').value;
+
+  const filtered = filterCachedItems(cachedNotifications, currentTab, search, category, sortBy);
+  const pageSize = 15;
+  totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  if (currentPage > totalPages) currentPage = 1;
+
+  const start = (currentPage - 1) * pageSize;
+  const pagedItems = filtered.slice(start, start + pageSize);
+
+  renderNotifications(container, pagedItems);
+  updatePagination({ total: filtered.length, page: currentPage, page_size: pageSize });
+}
 
 // ===== Theme =====
 function initTheme() {
@@ -33,12 +197,12 @@ function toggleTheme() {
 
 // ===== Event Listeners =====
 function initEventListeners() {
-  document.getElementById('refreshBtn').addEventListener('click', refresh);
-  document.getElementById('themeBtn').addEventListener('click', toggleTheme);
-  document.getElementById('dashboardBtn').addEventListener('click', () => {
+  document.getElementById('refreshBtn')?.addEventListener('click', refresh);
+  document.getElementById('themeBtn')?.addEventListener('click', toggleTheme);
+  document.getElementById('dashboardBtn')?.addEventListener('click', () => {
     chrome.runtime.sendMessage({ action: 'openDashboard' });
   });
-  document.getElementById('settingsBtn').addEventListener('click', () => {
+  document.getElementById('settingsBtn')?.addEventListener('click', () => {
     chrome.tabs.create({ url: 'dashboard.html#profile' });
   });
   document.getElementById('retryBtn')?.addEventListener('click', refresh);
@@ -50,87 +214,137 @@ function initEventListeners() {
       tab.classList.add('active');
       currentTab = tab.dataset.tab;
       currentPage = 1;
-      loadNotifications();
+      if (cachedNotifications && cachedNotifications.length > 0) {
+        renderFilteredCachedItems();
+      }
+      loadNotifications(false);
     });
   });
 
   // Filters
-  document.getElementById('searchInput').addEventListener('input', debounce(() => {
+  document.getElementById('searchInput')?.addEventListener('input', debounce(() => {
     currentPage = 1;
-    loadNotifications();
-  }, 400));
+    if (cachedNotifications && cachedNotifications.length > 0) {
+      renderFilteredCachedItems();
+    }
+    loadNotifications(false);
+  }, 300));
 
-  document.getElementById('categoryFilter').addEventListener('change', () => {
+  document.getElementById('categoryFilter')?.addEventListener('change', () => {
     currentPage = 1;
-    loadNotifications();
+    if (cachedNotifications && cachedNotifications.length > 0) {
+      renderFilteredCachedItems();
+    }
+    loadNotifications(false);
   });
 
-  document.getElementById('sortFilter').addEventListener('change', () => {
+  document.getElementById('sortFilter')?.addEventListener('change', () => {
     currentPage = 1;
-    loadNotifications();
+    if (cachedNotifications && cachedNotifications.length > 0) {
+      renderFilteredCachedItems();
+    }
+    loadNotifications(false);
   });
 
   // Pagination
-  document.getElementById('prevPage').addEventListener('click', () => {
-    if (currentPage > 1) { currentPage--; loadNotifications(); }
+  document.getElementById('prevPage')?.addEventListener('click', () => {
+    if (currentPage > 1) {
+      currentPage--;
+      if (cachedNotifications && cachedNotifications.length > 0) {
+        renderFilteredCachedItems();
+      } else {
+        loadNotifications(true);
+      }
+    }
   });
-  document.getElementById('nextPage').addEventListener('click', () => {
-    if (currentPage < totalPages) { currentPage++; loadNotifications(); }
+  document.getElementById('nextPage')?.addEventListener('click', () => {
+    if (currentPage < totalPages) {
+      currentPage++;
+      if (cachedNotifications && cachedNotifications.length > 0) {
+        renderFilteredCachedItems();
+      } else {
+        loadNotifications(true);
+      }
+    }
   });
 }
 
-// ===== Data Loading =====
+function populateCategoryDropdown(categories) {
+  const select = document.getElementById('categoryFilter');
+  if (!select) return;
+  const currentVal = select.value;
+  select.innerHTML = '<option value="">All Categories</option>';
+  categories.forEach(cat => {
+    const option = document.createElement('option');
+    option.value = cat.value;
+    option.textContent = cat.label;
+    if (cat.value === currentVal) option.selected = true;
+    select.appendChild(option);
+  });
+}
+
+function populateDefaultCategories() {
+  const defaults = [
+    { value: 'banking', label: 'Banking' },
+    { value: 'upsc', label: 'UPSC' },
+    { value: 'ssc', label: 'SSC' },
+    { value: 'railways', label: 'Railways' },
+    { value: 'defence', label: 'Defence' },
+    { value: 'central_govt', label: 'Central Govt' },
+    { value: 'state_govt', label: 'State Govt' },
+    { value: 'psu', label: 'PSU' },
+    { value: 'teaching', label: 'Teaching' },
+    { value: 'police', label: 'Police' },
+    { value: 'research', label: 'Research' }
+  ];
+  populateCategoryDropdown(defaults);
+}
+
+// ===== Live Data Fetchers =====
 async function loadDashboard() {
   try {
     const data = await api.getDashboard();
-    document.getElementById('statOpen').textContent = data.total_open || 0;
-    document.getElementById('statNew').textContent = data.newly_discovered || 0;
-    document.getElementById('statMatch').textContent = data.matching_profile || 0;
-    document.getElementById('statClosing').textContent = data.closing_soon || 0;
-
-    if (data.last_updated) {
-      const d = new Date(data.last_updated);
-      document.getElementById('lastUpdated').textContent =
-        `Last updated: ${formatDateTime(d)}`;
-    } else {
-      document.getElementById('lastUpdated').textContent = 'No data yet';
+    renderStats(data, false);
+    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+      chrome.storage.local.set({ cachedDashboard: data });
     }
-
     document.getElementById('errorState').style.display = 'none';
     document.getElementById('mainContent').style.display = 'block';
   } catch (error) {
-    showError(error.message);
+    if (!hasRenderedContent) {
+      showError(error.message);
+    }
   }
 }
 
 async function loadCategories() {
   try {
     const data = await api.getCategories();
-    const select = document.getElementById('categoryFilter');
-    data.categories.forEach(cat => {
-      const option = document.createElement('option');
-      option.value = cat.value;
-      option.textContent = cat.label;
-      select.appendChild(option);
-    });
+    if (data && data.categories) {
+      populateCategoryDropdown(data.categories);
+      if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+        chrome.storage.local.set({ cachedCategories: data.categories });
+      }
+    }
   } catch (e) {
-    console.error('Failed to load categories:', e);
+    console.warn('ExamRadar: Using fallback categories:', e.message);
   }
 }
 
-async function loadNotifications() {
+async function loadNotifications(showSkeleton = true) {
   const container = document.getElementById('notificationsList');
-  showLoading(container);
+  if (!hasRenderedContent && showSkeleton) {
+    showLoading(container);
+  }
 
   const params = {
     page: currentPage,
     page_size: 15,
-    search: document.getElementById('searchInput').value || undefined,
-    category: document.getElementById('categoryFilter').value || undefined,
-    sort_by: document.getElementById('sortFilter').value || 'newest',
+    search: document.getElementById('searchInput')?.value || undefined,
+    category: document.getElementById('categoryFilter')?.value || undefined,
+    sort_by: document.getElementById('sortFilter')?.value || 'newest',
   };
 
-  // Tab-specific params
   switch (currentTab) {
     case 'recommended':
       params.eligibility = 'likely_eligible';
@@ -152,7 +366,6 @@ async function loadNotifications() {
 
   try {
     let data = await api.getNotifications(params);
-    // If recommended tab is empty (e.g. brand new user without profile), fallback to newest active notices
     if (currentTab === 'recommended' && (!data.items || data.items.length === 0)) {
       const fallbackParams = { ...params, eligibility: undefined, sort_by: 'newest' };
       const fallbackData = await api.getNotifications(fallbackParams).catch(() => null);
@@ -160,30 +373,75 @@ async function loadNotifications() {
         data = fallbackData;
       }
     }
-    totalPages = Math.max(1, Math.ceil(data.total / data.page_size));
-    renderNotifications(container, data.items);
-    updatePagination(data);
+
+    if (data && data.items && data.items.length > 0) {
+      // Merge into cachedNotifications
+      const incoming = data.items.filter(n => !n.is_synthetic);
+      const existingIds = new Set(incoming.map(n => n.id));
+      const rest = cachedNotifications.filter(n => !existingIds.has(n.id));
+      cachedNotifications = [...incoming, ...rest];
+
+      if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+        chrome.storage.local.set({ cachedNotifications });
+      }
+
+      totalPages = Math.max(1, Math.ceil(data.total / data.page_size));
+      renderNotifications(container, data.items);
+      updatePagination(data);
+      hasRenderedContent = true;
+    } else if (!hasRenderedContent) {
+      renderNotifications(container, []);
+    }
+
     document.getElementById('errorState').style.display = 'none';
     document.getElementById('mainContent').style.display = 'block';
   } catch (error) {
-    showError(error.message);
+    console.warn('ExamRadar: Live notification fetch notice:', error.message);
+    if (hasRenderedContent) {
+      renderFilteredCachedItems();
+    } else {
+      showError(error.message);
+    }
   }
 }
 
 async function refresh() {
   const btn = document.getElementById('refreshBtn');
-  btn.style.opacity = '0.5';
-  btn.disabled = true;
+  if (btn) {
+    btn.style.opacity = '0.5';
+    btn.disabled = true;
+  }
 
   try {
     await chrome.runtime.sendMessage({ action: 'refresh' });
     await loadDashboard();
-    await loadNotifications();
+    await loadNotifications(false);
   } catch (e) {
-    console.error('Refresh failed:', e);
+    console.warn('Refresh notice:', e.message);
   } finally {
-    btn.style.opacity = '1';
-    btn.disabled = false;
+    if (btn) {
+      btn.style.opacity = '1';
+      btn.disabled = false;
+    }
+  }
+}
+
+// ===== Background Live Updates =====
+async function fetchLiveUpdates() {
+  try {
+    await loadCategories();
+    await loadDashboard();
+    await loadNotifications(false); // false = silent update, don't flash blank skeleton
+  } catch (err) {
+    console.warn('ExamRadar: Live update notice, keeping cached view active:', err.message);
+    if (hasRenderedContent) {
+      const lastUpdatedEl = document.getElementById('lastUpdated');
+      if (lastUpdatedEl && !lastUpdatedEl.textContent.includes('Cached')) {
+        lastUpdatedEl.textContent += ' (Offline Mode)';
+      }
+    } else {
+      showError(err.message);
+    }
   }
 }
 

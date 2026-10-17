@@ -314,8 +314,75 @@ def sync_sources(db: Session):
     logger.info("Synchronized official source registry with verified portals.")
 
 
+def seed_verified_notifications(db: Session) -> int:
+    """Pre-seed database with real verified notifications if empty."""
+    import os
+    import json
+    from datetime import datetime
+
+    verified_count = db.query(Notification).filter(Notification.is_synthetic == False).count()
+    if verified_count > 0:
+        logger.info(f"Database already contains {verified_count} verified notifications. Skipping pre-seed.")
+        return 0
+
+    json_path = os.path.join(os.path.dirname(__file__), "verified_notifications.json")
+    if not os.path.exists(json_path):
+        logger.warning(f"Verified notifications seed file not found at {json_path}")
+        return 0
+
+    try:
+        with open(json_path, "r", encoding="utf-8") as f:
+            items = json.load(f)
+    except Exception as e:
+        logger.error(f"Failed to read verified notifications seed file: {e}")
+        return 0
+
+    # Build org short_name to id map
+    orgs = db.query(Organization).all()
+    org_map = {o.short_name: o.id for o in orgs}
+
+    date_fields = [
+        'notification_date', 'application_start_date', 'application_end_date',
+        'correction_start_date', 'correction_end_date', 'exam_date',
+        'admit_card_date', 'result_date', 'age_cutoff_date'
+    ]
+    datetime_fields = [
+        'first_discovered_at', 'last_checked_at', 'last_verified_at', 'updated_at'
+    ]
+
+    inserted = 0
+    for item in items:
+        org_short = item.pop("org_short_name", None)
+        org_id = org_map.get(org_short) or item.get("organization_id")
+        if not org_id:
+            continue
+
+        for fld in date_fields:
+            if item.get(fld):
+                try:
+                    item[fld] = datetime.strptime(str(item[fld])[:10], '%Y-%m-%d').date()
+                except Exception:
+                    item[fld] = None
+        for fld in datetime_fields:
+            if item.get(fld):
+                try:
+                    item[fld] = datetime.fromisoformat(str(item[fld]).replace('Z', ''))
+                except Exception:
+                    item[fld] = None
+
+        item["organization_id"] = org_id
+        item["is_synthetic"] = False
+        notif = Notification(**item)
+        db.add(notif)
+        inserted += 1
+
+    db.commit()
+    logger.info(f"Successfully pre-seeded {inserted} verified notifications into database.")
+    return inserted
+
+
 def seed_initial_data(db: Session):
-    """Seed organizations and official sources ONLY. No synthetic records in production."""
+    """Seed organizations, official sources, and verified notifications."""
     existing_orgs = db.query(Organization).count()
     if existing_orgs == 0:
         logger.info("Seeding organizations...")
@@ -350,6 +417,10 @@ def seed_initial_data(db: Session):
         # Sync updated URLs and strategies
         sync_sources(db)
 
+    # Always pre-seed verified notifications if database has none
+    seed_verified_notifications(db)
+
     # Always ensure no synthetic records remain in production database
     purge_synthetic_notifications(db)
     purge_non_job_notifications(db)
+

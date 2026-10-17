@@ -8,23 +8,32 @@ const DEFAULT_API_BASE = 'https://examradar-india.onrender.com';
 class ExamRadarAPI {
   constructor() {
     this.baseUrl = DEFAULT_API_BASE;
-    this._init();
   }
 
-  async _init() {
-    if (typeof chrome !== 'undefined' && chrome.storage) {
-      const result = await chrome.storage.local.get(['apiBaseUrl']);
-      if (result.apiBaseUrl) {
-        this.baseUrl = result.apiBaseUrl;
+  async getBaseUrl() {
+    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+      try {
+        const result = await chrome.storage.local.get(['apiBaseUrl']);
+        if (result && result.apiBaseUrl) {
+          this.baseUrl = result.apiBaseUrl;
+        }
+      } catch (e) {
+        // use default
       }
     }
+    return this.baseUrl;
   }
 
   async _fetch(endpoint, options = {}) {
+    await this.getBaseUrl();
     const url = `${this.baseUrl}${endpoint}`;
     const defaults = {
       headers: { 'Content-Type': 'application/json' },
     };
+
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timeoutId = controller ? setTimeout(() => controller.abort(), options.timeoutMs || 15000) : null;
+
     const config = {
       ...defaults,
       ...options,
@@ -32,18 +41,24 @@ class ExamRadarAPI {
         ...defaults.headers,
         ...(options.headers || {}),
       },
+      signal: controller ? controller.signal : undefined,
     };
 
     try {
       const response = await fetch(url, config);
+      if (timeoutId) clearTimeout(timeoutId);
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
         throw new Error(errorData.detail || `HTTP ${response.status}`);
       }
       return await response.json();
     } catch (error) {
+      if (timeoutId) clearTimeout(timeoutId);
+      if (error.name === 'AbortError') {
+        throw new Error('Connection timed out. Server may be starting up.');
+      }
       if (error.name === 'TypeError' && error.message.includes('fetch')) {
-        throw new Error('Backend unavailable. Please ensure the ExamRadar server is running.');
+        throw new Error('Backend unavailable. Please check internet connection.');
       }
       throw error;
     }
