@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ExamRadar India</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    body { width: 420px; max-height: 580px; overflow-y: auto; }
+  </style>
+</head>
+<body>
+  <!-- Header -->
+  <header class="header">
+    <div class="header-top">
+      <div class="header-logo">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
+          <path d="M11 8v6M8 11h6"/>
+        </svg>
+        <h1>ExamRadar India</h1>
+      </div>
+      <div class="header-actions">
+        <button class="btn-icon" id="refreshBtn" title="Refresh">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M23 4v6h-6M1 20v-6h6"/>
+            <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
+          </svg>
+        </button>
+        <button class="btn-icon" id="themeBtn" title="Toggle theme">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
+          </svg>
+        </button>
+        <button class="btn-icon" id="dashboardBtn" title="Full Dashboard">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+            <rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/>
+          </svg>
+        </button>
+        <button class="btn-icon" id="settingsBtn" title="Profile & Settings">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+    <div class="header-stats" id="headerStats">
+      <div class="stat-card">
+        <span class="stat-value" id="statOpen">-</span>
+        <span class="stat-label">Open</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-value" id="statNew">-</span>
+        <span class="stat-label">New</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-value" id="statMatch">-</span>
+        <span class="stat-label">Match</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-value" id="statClosing">-</span>
+        <span class="stat-label">Closing Soon</span>
+      </div>
+    </div>
+    <div class="last-updated" id="lastUpdated">Checking...</div>
+  </header>
+
+  <!-- Tabs -->
+  <nav class="tabs" id="mainTabs">
+    <button class="tab active" data-tab="recommended">Recommended</button>
+    <button class="tab" data-tab="new">New</button>
+    <button class="tab" data-tab="open">Open</button>
+    <button class="tab" data-tab="closing">Closing Soon</button>
+    <button class="tab" data-tab="results">Results</button>
+    <button class="tab" data-tab="all">All</button>
+  </nav>
+
+  <!-- Filters -->
+  <div class="filters-bar">
+    <input type="text" class="search-input" id="searchInput" placeholder="Search by title, post, or ad number...">
+    <select class="filter-select" id="categoryFilter">
+      <option value="">All Categories</option>
+    </select>
+    <select class="filter-select" id="sortFilter">
+      <option value="newest">Newest First</option>
+      <option value="deadline">By Deadline</option>
+      <option value="organization">By Organization</option>
+    </select>
+  </div>
+
+  <!-- Content -->
+  <main id="mainContent">
+    <div class="cards-container" id="notificationsList">
+      <!-- Loading skeletons -->
+      <div class="skeleton-card loading-skeleton">
+        <div class="skeleton-line w-75 loading-skeleton"></div>
+        <div class="skeleton-line w-50 loading-skeleton"></div>
+        <div class="skeleton-line w-30 loading-skeleton"></div>
+      </div>
+      <div class="skeleton-card loading-skeleton">
+        <div class="skeleton-line w-75 loading-skeleton"></div>
+        <div class="skeleton-line w-50 loading-skeleton"></div>
+        <div class="skeleton-line w-30 loading-skeleton"></div>
+      </div>
+    </div>
+    <div class="pagination" id="pagination" style="display:none;">
+      <button class="btn btn-secondary btn-sm" id="prevPage">← Previous</button>
+      <span class="page-info" id="pageInfo">Page 1</span>
+      <button class="btn btn-secondary btn-sm" id="nextPage">Next →</button>
+    </div>
+  </main>
+
+  <!-- Error state -->
+  <div id="errorState" style="display:none;">
+    <div class="error-state">
+      <h3>Backend Unavailable</h3>
+      <p>Could not connect to the ExamRadar server. Please ensure it is running at the configured address.</p>
+      <button class="btn btn-primary" id="retryBtn" style="margin-top:12px;">Retry</button>
+    </div>
+  </div>
+
+  <script src="api.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
