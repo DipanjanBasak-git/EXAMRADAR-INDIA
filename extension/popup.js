@@ -244,8 +244,21 @@ function createNotificationCard(n) {
   const verifyBadge = getVerificationBadge(n.verification_status);
   const categoryLabel = getCategoryLabel(n.category);
 
-  const startDate = n.application_start_date ? formatDate(n.application_start_date) : 'Not specified';
-  const endDate = n.application_end_date ? formatDate(n.application_end_date) : 'Not specified';
+  const startDate = n.application_start_date ? formatDate(n.application_start_date) : '';
+  const endDate = n.application_end_date ? formatDate(n.application_end_date) : '';
+  let dateDisplay = '';
+  if (startDate && endDate) {
+    dateDisplay = `${startDate} → ${endDate}`;
+  } else if (endDate) {
+    dateDisplay = `Deadline: ${endDate}`;
+  } else if (startDate) {
+    dateDisplay = `Starts: ${startDate}`;
+  } else if (n.notification_date) {
+    dateDisplay = `Notice Date: ${formatDate(n.notification_date)}`;
+  } else if (n.first_discovered_at) {
+    dateDisplay = `Discovered: ${formatDate(n.first_discovered_at)}`;
+  }
+
   const vacancies = n.total_vacancies ? `${n.total_vacancies.toLocaleString()} vacancies` : '';
   const salary = n.salary_range || '';
   const ageRange = (n.min_age && n.max_age) ? `${n.min_age}-${n.max_age} yrs` : '';
@@ -272,7 +285,7 @@ function createNotificationCard(n) {
         ${qual ? `<span class="card-meta-item">🎓 ${escapeHtml(qual)}</span>` : ''}
       </div>
       <div class="card-meta">
-        <span class="card-meta-item">📅 ${startDate} → ${endDate}</span>
+        ${dateDisplay ? `<span class="card-meta-item">📅 ${dateDisplay}</span>` : ''}
         ${salary ? `<span class="card-meta-item">💰 ${escapeHtml(salary)}</span>` : ''}
         ${n.location ? `<span class="card-meta-item">📍 ${escapeHtml(n.location)}</span>` : ''}
       </div>

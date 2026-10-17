@@ -3,7 +3,7 @@
  * Handles alarms, persistent alert deduplication, badge counts, and notifications.
  */
 
-const DEFAULT_API_BASE = 'http://localhost:8000';
+const DEFAULT_API_BASE = 'https://examradar-india.onrender.com';
 const ALARM_NAME = 'examradar-check';
 
 // Note on Alarm Scheduling:

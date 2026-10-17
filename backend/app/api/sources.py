@@ -139,6 +139,9 @@ def trigger_discovery(
 ):
     """Administrator-triggered discovery run with immediate execution."""
     verify_admin_access(request)
+    from app.services.seed import purge_non_job_notifications, sync_sources
+    sync_sources(db)
+    purge_non_job_notifications(db)
     engine = DiscoveryEngine(db)
     try:
         source_ids = [source_id] if source_id else None

@@ -80,23 +80,47 @@ def normalize_date(date_str: str) -> Optional[date]:
 
 
 def extract_dates_from_text(text: str) -> dict:
-    """Extract key dates from notification text."""
+    """Extract key dates (start, deadline, exam, notification date) from notification text."""
     dates = {}
+    text_lower = text.lower()
+
+    # 1. Date ranges (e.g., "from 30.09.2026 to 21.10.2026" or "15-01-2026 to 15-02-2026")
+    range_match = re.search(
+        r"(?:apply\s+(?:online\s+)?from\s+|from\s+)?(\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4})\s*(?:to|-)\s*(\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4})",
+        text_lower
+    )
+    if range_match:
+        start_d = normalize_date(range_match.group(1))
+        end_d = normalize_date(range_match.group(2))
+        if start_d:
+            dates["application_start_date"] = start_d
+        if end_d:
+            dates["application_end_date"] = end_d
+
+    # 2. Specific date patterns
     patterns = {
         "application_start_date": [
             r"(?:start(?:ing)?|open(?:ing)?|commence)\s*(?:date|from)?\s*[:.-]?\s*(\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4})",
             r"(?:apply\s+from|applications?\s+(?:start|open))\s*[:.-]?\s*(\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4})",
         ],
         "application_end_date": [
-            r"(?:last\s+date|closing\s+date|end\s+date|deadline)\s*[:.-]?\s*(\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4})",
+            r"(?:last\s+date(?:\s+to\s+apply)?|closing\s+date|end\s+date|deadline)\s*[:.-]?\s*(\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4})",
             r"(?:apply\s+(?:before|by|till))\s*[:.-]?\s*(\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4})",
         ],
         "exam_date": [
             r"(?:exam(?:ination)?\s+date)\s*[:.-]?\s*(\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4})",
+            r"(?:date\s+of\s+(?:written\s+)?exam(?:ination)?)\s*[:.-]?\s*(\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4})",
+        ],
+        "notification_date": [
+            r"(?:date(?:\s+of\s+issue|\s+of\s+notification)?|dated)\s*[:.-]?\s*(\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4})",
+            r"\b([a-z]{3,9}\s+\d{1,2},?\s+\d{4})\b",
+            r"\b(\d{1,2}\s+[a-z]{3,9},?\s+\d{4})\b",
         ],
     }
-    text_lower = text.lower()
+
     for field, pats in patterns.items():
+        if field in dates:
+            continue
         for pat in pats:
             match = re.search(pat, text_lower)
             if match:
@@ -108,16 +132,27 @@ def extract_dates_from_text(text: str) -> dict:
 
 
 def extract_vacancies(text: str) -> Optional[int]:
-    """Extract total number of vacancies from text."""
+    """Extract total number of vacancies safely, preventing years from being counted as vacancies."""
+    text_lower = text.lower()
     patterns = [
-        r"(?:total\s+)?(?:no\.?\s+of\s+)?(?:vacanc(?:y|ies)|posts?)\s*[:.-]?\s*(\d+)",
-        r"(\d+)\s+(?:vacanc(?:y|ies)|posts?)",
+        r"(?:total\s+)?(?:no\.?\s+of\s+)?vacanc(?:y|ies)\s*[:.-]?\s*(\d+)",
+        r"(\d+)\s+vacanc(?:y|ies)",
+        r"(?:total\s+)?(?:no\.?\s+of\s+)?posts?\s*[:.-]?\s*(\d+)",
+        r"(\d+)\s+posts?\b",
     ]
     for pat in patterns:
-        match = re.search(pat, text.lower())
+        match = re.search(pat, text_lower)
         if match:
             try:
-                return int(match.group(1))
+                num = int(match.group(1))
+                # Protect against calendar years (e.g. 1950-2040) being mistaken for vacancy counts
+                if 1950 <= num <= 2040:
+                    if any(w in text_lower for w in ["year", "since", "dated", "circular", "batch", "class", "ad", "advt"]):
+                        continue
+                    if "vacanc" not in match.group(0):
+                        continue
+                if 1 <= num <= 500000:
+                    return num
             except ValueError:
                 continue
     return None
@@ -309,7 +344,7 @@ class DiscoveryEngine:
             "selection list", "provisional panel", "cbt scorecard"
         }
 
-        def add_link(full_url: str, text: str):
+        def add_link(full_url: str, text: str, context_text: str = "", apply_url: Optional[str] = None):
             clean_txt = " ".join(text.split())
             if not clean_txt or len(clean_txt) < 12:
                 return
@@ -317,6 +352,14 @@ class DiscoveryEngine:
             if clean_lower in generic_navigation_titles or clean_lower.rstrip(":") in generic_navigation_titles:
                 return
             if any(clean_lower == g for g in generic_navigation_titles):
+                return
+            # Strict non-job filter to avoid banking regulations, media notices, and circulars
+            if any(nj in clean_lower for nj in [
+                "media interaction", "circulars withdrawn", "draft notifications/guidelines",
+                "master circular", "master direction", "monetary policy", "speech by",
+                "press release", "tender notice", "auction of", "holiday list", "faqs on",
+                "holidays", "terms and conditions", "privacy policy"
+            ]):
                 return
             if full_url in seen_urls:
                 return
@@ -330,6 +373,8 @@ class DiscoveryEngine:
             links.append({
                 "url": full_url,
                 "text": clean_txt[:500],
+                "context_text": (context_text or clean_txt)[:3000],
+                "apply_url": apply_url,
                 "source_id": source.id,
                 "category": source.category.value,
                 "organization_id": source.organization_id,
@@ -344,12 +389,32 @@ class DiscoveryEngine:
                 target_a = pdf_link or apply_link
                 if not target_a:
                     continue
+                apply_url = urljoin(base_url, apply_link["href"]) if apply_link and apply_link.get("href") else None
                 title_clean = card_text
                 for marker in ["ADVERTISEMENT NO", "LAST DATE TO APPLY", "DOWNLOAD ADVERTISEMENT", "English ("]:
                     if marker in title_clean:
                         title_clean = title_clean.split(marker)[0].strip()
                 if len(title_clean) > 15:
-                    add_link(urljoin(base_url, target_a["href"]), title_clean[:300])
+                    add_link(
+                        urljoin(base_url, target_a["href"]),
+                        title_clean[:300],
+                        context_text=card_text,
+                        apply_url=apply_url
+                    )
+            return links[:40]
+
+        # Dedicated parser for RBI Opportunities vacancies portal
+        if strategy == "rbi_html":
+            for tr in soup.find_all("tr"):
+                a_tag = tr.find("a", href=lambda h: h and ("id=" in h.lower() or ".pdf" in h.lower() or "vacanc" in h.lower()))
+                if not a_tag:
+                    continue
+                href = a_tag.get("href", "").strip()
+                title_text = a_tag.get_text(strip=True)
+                if len(title_text) < 12:
+                    continue
+                row_text = " ".join(tr.get_text().split())
+                add_link(urljoin(base_url, href), title_text, context_text=row_text)
             return links[:40]
 
         # Dedicated parser for DRDO RAC structured advertisement cards
@@ -364,7 +429,7 @@ class DiscoveryEngine:
                     if marker in title_clean:
                         title_clean = title_clean.split(marker)[0].strip()
                 if len(title_clean) > 15:
-                    add_link(urljoin(base_url, pdf_link["href"]), title_clean[:300])
+                    add_link(urljoin(base_url, pdf_link["href"]), title_clean[:300], context_text=card_text)
             for a_tag in soup.find_all("a", href=True):
                 txt = a_tag.get_text(strip=True)
                 if any(k in txt.lower() for k in ["addendum to advt", "public notice", "recruitment of"]):
@@ -377,10 +442,12 @@ class DiscoveryEngine:
                 continue
 
             text = a_tag.get_text(strip=True)
-            if len(text) < 15 or text.lower() in ["download", "notice", "view", "details", "click here", "pdf"]:
-                parent_row = a_tag.find_parent(["tr", "li", "div", "p"])
-                if parent_row:
-                    text = parent_row.get_text(" ", strip=True)
+            context_text = text
+            parent_row = a_tag.find_parent(["tr", "li", "div", "p"])
+            if parent_row:
+                context_text = " ".join(parent_row.get_text().split())
+                if len(text) < 15 or text.lower() in ["download", "notice", "view", "details", "click here", "pdf"]:
+                    text = context_text
 
             combined = (href + " " + text).lower()
 
@@ -416,7 +483,7 @@ class DiscoveryEngine:
 
             if is_relevant:
                 full_url = urljoin(base_url, href)
-                add_link(full_url, text)
+                add_link(full_url, text, context_text=context_text)
 
         return links[:40]
 
@@ -428,9 +495,19 @@ class DiscoveryEngine:
             return "skip"
 
         title = " ".join(title.split())
+        title_lower = title.lower()
+
+        # Reject obvious non-recruitment items
+        if any(nj in title_lower for nj in [
+            "media interaction", "circulars withdrawn", "draft notifications/guidelines",
+            "master circular", "master direction", "monetary policy", "speech by",
+            "press release", "tender notice", "auction of", "holiday list", "faqs on",
+            "rbi bulletin", "minutes of", "annual report"
+        ]):
+            return "skip"
 
         # Check for Corrigendum / Extension targeting an existing recruitment
-        is_corrigendum = any(k in title.lower() for k in [
+        is_corrigendum = any(k in title_lower for k in [
             "corrigendum", "extension", "last date extended", "addendum", "revised date"
         ])
 
@@ -442,7 +519,7 @@ class DiscoveryEngine:
 
             if existing:
                 already_recorded = any(
-                    title.lower() in (ev.description or "").lower()
+                    title_lower in (ev.description or "").lower()
                     for ev in existing.lifecycle_events
                 ) if existing.lifecycle_events else False
 
@@ -485,14 +562,27 @@ class DiscoveryEngine:
         if existing_title:
             return "skip"
 
+        # Extract dates, advt number, and vacancies from context or card text
+        context = link_info.get("context_text", "") or title
+        context_dates = extract_dates_from_text(context)
+        context_vacancies = extract_vacancies(context)
+        context_min_age, context_max_age = extract_age_limits(context)
+
         # Extract advertisement number via regex
         advt_no = None
         advt_match = re.search(
-            r"(?:Advt\.?\s*No\.?|Advertisement\s*No\.?|CEN\s*No\.?|CEN|Notice\s*No\.?|CRP[- ][A-Za-z0-9\/\-_]+)\s*[:\s]*([A-Za-z0-9\/\-_().]+)",
-            title, re.IGNORECASE
+            r"(?:Advt\.?\s*No\.?|Advertisement\s*No\.?|CRPD\/[A-Za-z0-9\/\-_]+|CEN\s*No\.?|CEN|Notice\s*No\.?|CRP[- ][A-Za-z0-9\/\-_]+)\s*[:\s]*([A-Za-z0-9\/\-_().]+)",
+            context, re.IGNORECASE
         )
         if advt_match:
             advt_no = advt_match.group(0).strip()
+
+        # Date in title or row text
+        notif_date = context_dates.get("notification_date")
+        if not notif_date:
+            date_match = re.search(r"\b([A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4}|\d{1,2}[-./]\d{1,2}[-./]\d{2,4})\b", context)
+            if date_match:
+                notif_date = normalize_date(date_match.group(1))
 
         # Create genuine notification record
         notification = Notification(
@@ -500,7 +590,15 @@ class DiscoveryEngine:
             organization_id=link_info["organization_id"],
             category=link_info["category"],
             advertisement_number=advt_no,
+            total_vacancies=context_vacancies,
+            min_age=context_min_age,
+            max_age=context_max_age,
+            notification_date=notif_date,
+            application_start_date=context_dates.get("application_start_date"),
+            application_end_date=context_dates.get("application_end_date"),
+            exam_date=context_dates.get("exam_date"),
             official_notification_url=url,
+            official_application_url=link_info.get("apply_url"),
             source_url=source.recruitment_page_url or source.base_url,
             source_domain=urlparse(url).netloc,
             application_status=ApplicationStatus.APPLICATION_OPEN,
@@ -513,12 +611,6 @@ class DiscoveryEngine:
             is_active=True,
         )
 
-        date_in_title = re.search(r"\(?(\d{1,2}[-./]\d{1,2}[-./]\d{2,4})\)?", title)
-        if date_in_title:
-            parsed_d = normalize_date(date_in_title.group(1))
-            if parsed_d:
-                notification.notification_date = parsed_d
-
         try:
             if is_safe_url(url) and not url.lower().endswith((".pdf", ".zip", ".doc", ".docx")):
                 resp = self.client.get(url, timeout=5.0)
@@ -529,21 +621,21 @@ class DiscoveryEngine:
                     notification.content_hash = content_hash(page_text)
 
                     dates = extract_dates_from_text(page_text)
-                    if "application_start_date" in dates:
+                    if not notification.application_start_date and "application_start_date" in dates:
                         notification.application_start_date = dates["application_start_date"]
-                    if "application_end_date" in dates:
+                    if not notification.application_end_date and "application_end_date" in dates:
                         notification.application_end_date = dates["application_end_date"]
-                    if "exam_date" in dates:
+                    if not notification.exam_date and "exam_date" in dates:
                         notification.exam_date = dates["exam_date"]
 
                     vacancies = extract_vacancies(page_text)
-                    if vacancies:
+                    if not notification.total_vacancies and vacancies:
                         notification.total_vacancies = vacancies
 
                     min_age, max_age = extract_age_limits(page_text)
-                    if min_age:
+                    if not notification.min_age and min_age:
                         notification.min_age = min_age
-                    if max_age:
+                    if not notification.max_age and max_age:
                         notification.max_age = max_age
         except Exception:
             pass

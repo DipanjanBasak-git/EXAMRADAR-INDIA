@@ -309,9 +309,10 @@ async function fetchAllNotifications() {
       eligibility: onlyEligible ? 'likely_eligible' : undefined,
     };
 
+    const res = await api.getNotifications(params);
     currentNotifications = ((res && Array.isArray(res.items)) ? res.items : []).filter(item => !item.is_synthetic);
-    const totalCount = res.total || currentNotifications.length;
-    totalPages = Math.max(1, Math.ceil(totalCount / (res.page_size || 10)));
+    const totalCount = (res && res.total) || currentNotifications.length;
+    totalPages = Math.max(1, Math.ceil(totalCount / ((res && res.page_size) || 10)));
 
     if (currentNotifications.length === 0) {
       container.innerHTML = `
@@ -809,8 +810,15 @@ function renderNotificationCard(item) {
   const isEligible = item.eligibility_match === 'eligible' || item.is_eligible;
   const isClosing = item.application_status === 'closing_soon' || item.is_closing_soon;
   const orgCode = item.organization_short_name || item.organization_name || item.organization?.code || item.organization?.name || 'Govt';
-  const vacancies = item.total_vacancies ? `${item.total_vacancies.toLocaleString()} vacancies` : '';
-  const deadline = item.application_end_date ? `Closes ${formatDate(item.application_end_date)}` : '';
+  const vacancies = item.total_vacancies ? `<span>👥 ${item.total_vacancies.toLocaleString()} vacancies</span>` : '';
+  let dateTag = '';
+  if (item.application_start_date && item.application_end_date) {
+    dateTag = `<span>📅 ${formatDate(item.application_start_date)} → ${formatDate(item.application_end_date)}</span>`;
+  } else if (item.application_end_date) {
+    dateTag = `<span>📅 Deadline: ${formatDate(item.application_end_date)}</span>`;
+  } else if (item.notification_date) {
+    dateTag = `<span>📅 Notice Date: ${formatDate(item.notification_date)}</span>`;
+  }
   const notifUrl = item.official_notification_url || item.official_source_url;
   const applyUrl = item.official_application_url || item.application_link;
 
@@ -831,9 +839,9 @@ function renderNotificationCard(item) {
       </div>
       <h3 class="card-title">${escapeHtml(item.title)}</h3>
       <div class="card-meta">
-        ${vacancies ? `<span>${vacancies}</span>` : ''}
-        ${deadline ? `<span>${deadline}</span>` : ''}
-        ${item.educational_qualification ? `<span>${escapeHtml(item.educational_qualification)}</span>` : ''}
+        ${vacancies}
+        ${dateTag}
+        ${item.educational_qualification ? `<span>🎓 ${escapeHtml(item.educational_qualification)}</span>` : ''}
       </div>
       <div class="card-actions">
         <button class="btn btn-sm btn-outline view-details-btn" data-id="${item.id}">View Details</button>

@@ -3,7 +3,7 @@
  * Handles all communication with the backend.
  */
 
-const DEFAULT_API_BASE = 'http://localhost:8000';
+const DEFAULT_API_BASE = 'https://examradar-india.onrender.com';
 
 class ExamRadarAPI {
   constructor() {
@@ -25,7 +25,14 @@ class ExamRadarAPI {
     const defaults = {
       headers: { 'Content-Type': 'application/json' },
     };
-    const config = { ...defaults, ...options };
+    const config = {
+      ...defaults,
+      ...options,
+      headers: {
+        ...defaults.headers,
+        ...(options.headers || {}),
+      },
+    };
 
     try {
       const response = await fetch(url, config);
@@ -77,10 +84,16 @@ class ExamRadarAPI {
   async getDiscoveryStatus() { return this._fetch('/api/v1/discovery/status'); }
   async triggerDiscovery(sourceId = null) {
     const endpoint = sourceId ? `/api/v1/discovery/run?source_id=${encodeURIComponent(sourceId)}` : '/api/v1/discovery/run';
-    return this._fetch(endpoint, { method: 'POST' });
+    return this._fetch(endpoint, {
+      method: 'POST',
+      headers: { 'x-admin-key': 'examradar-admin' },
+    });
   }
   async discoverSource(sourceId) {
-    return this._fetch(`/api/v1/sources/${encodeURIComponent(sourceId)}/discover`, { method: 'POST' });
+    return this._fetch(`/api/v1/sources/${encodeURIComponent(sourceId)}/discover`, {
+      method: 'POST',
+      headers: { 'x-admin-key': 'examradar-admin' },
+    });
   }
 
   // Profile

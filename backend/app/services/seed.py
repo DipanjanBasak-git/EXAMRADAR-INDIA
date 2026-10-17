@@ -207,11 +207,11 @@ SOURCES = [
     },
     {
         "org_short": "RBI",
-        "name": "RBI Official Notices",
-        "base_url": "https://www.rbi.org.in",
-        "recruitment_page_url": "https://www.rbi.org.in/scripts/BS_ViewNotices.aspx",
-        "fetch_interval_minutes": 360,
-        "parsing_strategy": "generic_html",
+        "name": "RBI Official Opportunities & Vacancies",
+        "base_url": "https://opportunities.rbi.org.in",
+        "recruitment_page_url": "https://opportunities.rbi.org.in/scripts/vacancies.aspx",
+        "fetch_interval_minutes": 180,
+        "parsing_strategy": "rbi_html",
     },
     {
         "org_short": "Indian Army",
@@ -250,6 +250,36 @@ def purge_synthetic_notifications(db: Session) -> int:
     count = db.query(Notification).filter(Notification.id.in_(synthetic_ids)).delete(synchronize_session=False)
     db.commit()
     logger.info(f"Purged {count} synthetic test notifications from the production database.")
+    return count
+
+
+def purge_non_job_notifications(db: Session) -> int:
+    """Purge junk non-recruitment records (media interactions, banking circulars, withdrawn notices)."""
+    from app.models.user import SavedNotification
+    from app.models.notification import LifecycleEvent
+    from sqlalchemy import or_
+
+    junk_patterns = [
+        "%Media Interaction%",
+        "%Circulars Withdrawn%",
+        "%Draft Notifications/Guidelines%",
+        "%Master Circular%",
+        "%Master Direction%",
+        "%Press Release%",
+        "%Monetary Policy%",
+        "%RBI Bulletin%",
+    ]
+    filters = [Notification.title.ilike(p) for p in junk_patterns]
+    junk_notifs = db.query(Notification).filter(or_(*filters)).all()
+    if not junk_notifs:
+        return 0
+
+    junk_ids = [n.id for n in junk_notifs]
+    db.query(SavedNotification).filter(SavedNotification.notification_id.in_(junk_ids)).delete(synchronize_session=False)
+    db.query(LifecycleEvent).filter(LifecycleEvent.notification_id.in_(junk_ids)).delete(synchronize_session=False)
+    count = db.query(Notification).filter(Notification.id.in_(junk_ids)).delete(synchronize_session=False)
+    db.commit()
+    logger.info(f"Purged {count} non-job/junk notices from database.")
     return count
 
 
@@ -322,3 +352,4 @@ def seed_initial_data(db: Session):
 
     # Always ensure no synthetic records remain in production database
     purge_synthetic_notifications(db)
+    purge_non_job_notifications(db)
