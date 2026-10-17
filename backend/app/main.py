@@ -38,6 +38,14 @@ async def lifespan(app: FastAPI):
         db.close()
 
     logger.info("ExamRadar India backend ready.")
+
+    # Automatically start initial background discovery crawl on startup
+    if settings.discovery_enabled:
+        import threading
+        from app.api.sources import _run_discovery_worker
+        threading.Thread(target=_run_discovery_worker, daemon=True).start()
+        logger.info("Started background discovery thread.")
+
     yield
     logger.info("Shutting down ExamRadar India backend.")
 

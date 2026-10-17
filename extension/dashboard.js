@@ -155,26 +155,37 @@ async function loadStats() {
 async function renderDashboardView() {
   const contentArea = document.getElementById('contentArea');
   try {
-    const [recData, closingData] = await Promise.all([
+    let [recData, closingData] = await Promise.all([
       api.getNotifications({ page: 1, page_size: 6, sort_by: 'recommended' }).catch(() => ({ items: [] })),
       api.getClosingSoon(10).catch(() => ({ items: [] }))
     ]);
 
+    let recItems = ((recData && Array.isArray(recData.items)) ? recData.items : (Array.isArray(recData) ? recData : [])).filter(item => !item.is_synthetic);
+    let isFallback = false;
+
+    if (recItems.length === 0) {
+      const latestData = await api.getNotifications({ page: 1, page_size: 6, sort_by: 'newest' }).catch(() => ({ items: [] }));
+      recItems = ((latestData && Array.isArray(latestData.items)) ? latestData.items : []).filter(item => !item.is_synthetic);
+      isFallback = true;
+    }
+
+    const titleText = isFallback ? 'Latest Active Openings' : 'Recommended For You';
+
     let html = `
       <div class="fade-in" style="padding: 16px;">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
-          <h2 class="section-title" style="padding:0;">Recommended For You</h2>
+          <h2 class="section-title" style="padding:0;">${titleText}</h2>
           <button class="btn btn-sm btn-outline" id="viewAllBtn">Browse All Notifications &rarr;</button>
         </div>
+        ${isFallback ? '<div style="background:var(--bg-secondary); padding:8px 14px; border-radius:var(--border-radius); font-size:12px; color:var(--text-secondary); margin-bottom:16px; border:1px solid var(--border-color);">💡 Tip: Set up your qualifications & category in <strong>Profile</strong> to get personalized eligibility tags.</div>' : ''}
         <div class="notification-list" style="padding:0; margin-bottom:24px;">
     `;
 
-    const recItems = ((recData && Array.isArray(recData.items)) ? recData.items : (Array.isArray(recData) ? recData : [])).filter(item => !item.is_synthetic);
     if (recItems.length === 0) {
       html += `
         <div class="empty-state">
           <h3>No verified notifications found yet</h3>
-          <p>Complete your qualifications and age in your Profile to match verified government vacancies, or monitor portal health in Sources.</p>
+          <p>Click "Trigger Background Discovery Now" in Sources to crawl official recruitment portals.</p>
           <button class="btn btn-sm btn-primary" id="dashViewSourcesBtn" style="margin-top:10px;">View Source Monitoring Status</button>
         </div>
       `;

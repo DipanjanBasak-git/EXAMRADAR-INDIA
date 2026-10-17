@@ -404,7 +404,10 @@ def get_dashboard(
 
     # Counts
     open_q = base.filter(
-        Notification.application_start_date <= today,
+        or_(
+            Notification.application_start_date.is_(None),
+            Notification.application_start_date <= today,
+        ),
         or_(
             Notification.application_end_date.is_(None),
             Notification.application_end_date >= today,

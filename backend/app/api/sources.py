@@ -1,9 +1,9 @@
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, Request, Query
+from fastapi import APIRouter, Depends, HTTPException, Request, Query, BackgroundTasks
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
-from app.database.session import get_db
+from app.database.session import get_db, SessionLocal
 from app.models.source import Source, Organization
 from app.models.notification import DiscoveryLog, Notification
 from app.schemas.source import (
@@ -131,31 +131,39 @@ def discovery_status(db: Session = Depends(get_db)):
     )
 
 
+def _run_discovery_worker(source_id: Optional[int] = None):
+    """Worker function to execute discovery safely in background thread."""
+    db = SessionLocal()
+    try:
+        from app.services.seed import purge_non_job_notifications, sync_sources
+        sync_sources(db)
+        purge_non_job_notifications(db)
+        engine = DiscoveryEngine(db)
+        try:
+            source_ids = [source_id] if source_id else None
+            engine.run_discovery(source_ids=source_ids, force=True)
+        finally:
+            engine.close()
+    except Exception as e:
+        import logging
+        logging.getLogger("examradar.sources").error(f"Background discovery run failed: {e}")
+    finally:
+        db.close()
+
+
 @router.post("/discovery/run")
 def trigger_discovery(
     request: Request,
+    background_tasks: BackgroundTasks,
     source_id: Optional[int] = Query(None),
-    db: Session = Depends(get_db),
 ):
-    """Administrator-triggered discovery run with immediate execution."""
+    """Administrator-triggered discovery run executed asynchronously in background."""
     verify_admin_access(request)
-    from app.services.seed import purge_non_job_notifications, sync_sources
-    sync_sources(db)
-    purge_non_job_notifications(db)
-    engine = DiscoveryEngine(db)
-    try:
-        source_ids = [source_id] if source_id else None
-        results = engine.run_discovery(source_ids=source_ids, force=True)
-        return {
-            "status": "completed",
-            "message": f"Discovery run completed. Checked {len(results)} sources.",
-            "sources_checked": len(results),
-            "total_new": sum(r.get("new", 0) for r in results),
-            "total_updated": sum(r.get("updated", 0) for r in results),
-            "results": results,
-        }
-    finally:
-        engine.close()
+    background_tasks.add_task(_run_discovery_worker, source_id)
+    return {
+        "status": "started",
+        "message": "Discovery run started in background. Crawling official exam portals now...",
+    }
 
 
 @router.post("/sources/{source_id}/discover")

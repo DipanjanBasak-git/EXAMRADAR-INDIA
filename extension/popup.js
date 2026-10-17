@@ -151,7 +151,15 @@ async function loadNotifications() {
   }
 
   try {
-    const data = await api.getNotifications(params);
+    let data = await api.getNotifications(params);
+    // If recommended tab is empty (e.g. brand new user without profile), fallback to newest active notices
+    if (currentTab === 'recommended' && (!data.items || data.items.length === 0)) {
+      const fallbackParams = { ...params, eligibility: undefined, sort_by: 'newest' };
+      const fallbackData = await api.getNotifications(fallbackParams).catch(() => null);
+      if (fallbackData && fallbackData.items && fallbackData.items.length > 0) {
+        data = fallbackData;
+      }
+    }
     totalPages = Math.max(1, Math.ceil(data.total / data.page_size));
     renderNotifications(container, data.items);
     updatePagination(data);
